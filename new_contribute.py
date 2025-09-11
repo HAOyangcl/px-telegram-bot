@@ -29,6 +29,13 @@ SPECIFIC_CHANNELS = {
 user_posts = {}
 user_states = {}
 
+import os, threading, http.server, socketserver
+def _keep_port():
+    port = int(os.environ.get("PORT", 8080))
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        httpd.serve_forever()
+threading.Thread(target=_keep_port, daemon=True).start()
 
 class PostManager:
     def __init__(self):
