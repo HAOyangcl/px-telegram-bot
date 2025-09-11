@@ -1,6 +1,7 @@
 import asyncio
 import re
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.error import RetryAfter, TimedOut
@@ -15,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 机器人配置
-TOKEN = '7277523854:AAHUKfxzyzgXAIJ8VqPjoAuiG2Ft15Z1fu0'
+TOKEN = os.getenv("TOKEN")        # 从 Render 环境变量里读
 CHANNEL_IDS = ['@yunpanNB', '@ammmziyuan']  # 多个频道ID
 SPECIFIC_CHANNELS = {
     'quark': '@yunpanquark',      # 夸克网盘频道
