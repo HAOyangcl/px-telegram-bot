@@ -1,7 +1,6 @@
 import asyncio
 import re
 import logging
-import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.error import RetryAfter, TimedOut
@@ -16,18 +15,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 机器人配置
+# TOKEN = 'telegram_bot_token'
 TOKEN = os.getenv("TOKEN")        # 从 Render 环境变量里读
-CHANNEL_IDS = ['@yunpanNB', '@ammmziyuan']  # 多个频道ID
+CHANNEL_IDS = ['@yunpanNB', '@ammmziyuan','@naclyunpan']  # 多个频道ID
 SPECIFIC_CHANNELS = {
     'quark': '@yunpanquark',      # 夸克网盘频道
     'baidu': '@yunpanbaidu',      # 百度网盘频道
     'uc': '@pxyunpanuc',          # UC网盘频道
     'xunlei': '@pxyunpanxunlei'   # 迅雷网盘频道
 }
-
-# 用户数据存储
-user_posts = {}
-user_states = {}
 
 ### 废话
 import os, threading, http.server, socketserver
@@ -39,6 +35,11 @@ def _keep_port():
 threading.Thread(target=_keep_port, daemon=True).start()
 
 #### 以上的
+
+# 用户数据存储
+user_posts = {}
+user_states = {}
+
 
 class PostManager:
     def __init__(self):
@@ -321,9 +322,10 @@ class PostManager:
         
         return parsed_data
 
-    def create_post_caption(self, post_data):
+    def create_post_caption(self, post_data, is_submission=False):
         """
         创建标准格式的投稿说明
+        is_submission: 是否是最终提交，只有在最终提交时才添加 #鹏摇星海 标签
         """
         # 添加版权相关关键词过滤
         copyright_keywords = ['⚠️ 版权：', '版权反馈/DMCA', '📢 频道 👥群组🔍投稿/搜索', '版权', '版权反馈', 'DMCA', '频道',
@@ -339,19 +341,19 @@ class PostManager:
         links_formatted = self.format_links('\n'.join(post_data['links']) if isinstance(post_data['links'], list)
                                             else post_data['links'])
 
-        # 在标签中追加 #鹏摇星海
-        original_tags = post_data['tags']
-        if original_tags:
-            tags_with_prefix = f"{original_tags} #鹏摇星海"
+        # 处理标签，确保只在用户提交时添加
+        original_tags = post_data.get('tags', '')
+        if is_submission:
+            tags = f"{original_tags} #鹏摇星海" if original_tags else "#鹏摇星海"
         else:
-            tags_with_prefix = "#鹏摇星海"
+            tags = original_tags if original_tags else ""
 
         fixed_caption = (
             f"名称：{post_data['name']}\n\n"
             f"描述：{post_data['description']}\n\n"
             f"{links_formatted}\n\n"
             f"📁 大小：{post_data['size']}\n"
-            f"🏷 标签：{tags_with_prefix}"
+            f"🏷 标签：{tags}"
         )
 
         return self.remove_duplicate_links(fixed_caption)
@@ -590,12 +592,187 @@ async def show_post_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                                     "您可以选择以下操作：", reply_markup=reply_markup)
 
 
+async def handle_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    处理编辑回调 - 显示编辑菜单
+    """
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if user_id not in user_posts or not user_posts[user_id]:
+        await query.answer("找不到您的投稿内容")
+        return
+
+    # 获取最新的投稿
+    latest_post = user_posts[user_id][-1]
+    caption = latest_post['caption']
+
+    # 解析投稿内容
+    parsed_data = post_manager.strict_mode_parse(caption)
+
+    # 创建编辑菜单
+    keyboard = [
+        [InlineKeyboardButton(f"✏️ 编辑名称: {parsed_data['name'][:20]}{'...' if len(parsed_data['name']) > 20 else ''}", callback_data="edit_name")],
+        [InlineKeyboardButton(f"✏️ 编辑描述: {parsed_data['description'][:20]}{'...' if len(parsed_data['description']) > 20 else ''}", callback_data="edit_description")],
+        [InlineKeyboardButton(f"✏️ 编辑链接: {len(parsed_data['links'])}个链接", callback_data="edit_links")],
+        [InlineKeyboardButton(f"✏️ 编辑大小: {parsed_data['size']}", callback_data="edit_size")],
+        [InlineKeyboardButton(f"✏️ 编辑标签: {parsed_data['tags'][:20]}{'...' if len(parsed_data['tags']) > 20 else ''}", callback_data="edit_tags")],
+        [InlineKeyboardButton("✅ 完成编辑", callback_data="finish_edit")],
+        [InlineKeyboardButton("❌ 取消编辑", callback_data="cancel_edit")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text("请选择要编辑的字段：", reply_markup=reply_markup)
+
+
+async def handle_edit_field_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    处理编辑特定字段的回调
+    """
+    query = update.callback_query
+    user_id = query.from_user.id
+    field_to_edit = query.data.replace("edit_", "")
+
+    # 获取最新的投稿
+    latest_post = user_posts[user_id][-1]
+    caption = latest_post['caption']
+
+    # 解析投稿内容
+    parsed_data = post_manager.strict_mode_parse(caption)
+
+    # 存储当前编辑状态
+    user_states[user_id] = {
+        'step': f'edit_{field_to_edit}',
+        'current_post': {
+            'image': latest_post['image'],
+            'caption': caption,
+            'parsed_data': parsed_data
+        },
+        'editing_field': field_to_edit
+    }
+
+    # 提示用户输入新值
+    field_names = {
+        'name': '名称',
+        'description': '描述',
+        'links': '链接（每行一个）',
+        'size': '大小',
+        'tags': '标签'
+    }
+
+    # 显示当前值和输入提示
+    current_value = parsed_data[field_to_edit]
+    if field_to_edit == 'links' and isinstance(current_value, list):
+        current_value = '\n'.join(current_value)
+    
+    message = f"当前{field_names[field_to_edit]}：\n{current_value}\n\n请输入新的{field_names[field_to_edit]}："
+    
+    # 添加取消按钮
+    keyboard = [[InlineKeyboardButton("❌ 取消编辑当前字段", callback_data="cancel_edit_field")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(message, reply_markup=reply_markup)
+
+
+async def handle_edit_field_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    处理用户编辑字段的消息
+    """
+    user_id = update.message.from_user.id
+
+    if user_id not in user_states or user_states[user_id]['step'] not in ['edit_name', 'edit_description', 'edit_links', 'edit_size', 'edit_tags']:
+        await handle_message(update, context)
+        return
+
+    # 获取编辑状态
+    edit_state = user_states[user_id]
+    editing_field = edit_state['editing_field']
+    new_value = update.message.text.strip()
+
+    # 验证输入
+    if not new_value:
+        await update.message.reply_text("输入不能为空，请重新输入！")
+        return
+
+    if editing_field == 'links':
+        # 处理链接格式
+        new_value = new_value.split('\n')
+        # 过滤空行
+        new_value = [link.strip() for link in new_value if link.strip()]
+
+    # 更新解析数据
+    edit_state['current_post']['parsed_data'][editing_field] = new_value
+
+    # 更新投稿内容
+    try:
+        new_caption = post_manager.create_post_caption(edit_state['current_post']['parsed_data'])
+        edit_state['current_post']['caption'] = new_caption
+        
+        # 更新用户投稿
+        user_posts[user_id][-1] = edit_state['current_post']
+        
+        # 显示编辑成功消息和完整的更新内容
+        await update.message.reply_text(f"{editing_field}已更新！\n\n更新后的完整内容：\n{new_caption}")
+        await show_post_preview(update, context, user_id)
+    except ValueError as e:
+        await update.message.reply_text(f"更新失败：{str(e)}")
+
+
+async def handle_finish_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    处理完成编辑回调
+    """
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # 清除编辑状态
+    if user_id in user_states:
+        del user_states[user_id]
+
+    # 显示更新后的投稿预览
+    await show_post_preview(update, context, user_id)
+
+
+async def handle_cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    处理取消编辑回调
+    """
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # 清除编辑状态
+    if user_id in user_states:
+        del user_states[user_id]
+
+    # 显示原始投稿预览
+    await show_post_preview(update, context, user_id)
+
+
+async def handle_cancel_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    处理取消编辑当前字段回调
+    """
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # 清除当前字段编辑状态
+    if user_id in user_states and user_states[user_id]['step'].startswith('edit_'):
+        # 返回到编辑菜单
+        await handle_edit_callback(update, context)
+
+
+# 修改 handle_message 函数以支持编辑模式
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     处理用户投稿消息
     """
     user_id = update.message.from_user.id
     
+    # 检查是否在编辑模式
+    if user_id in user_states and user_states[user_id]['step'].startswith('edit_'):
+        await handle_edit_field_message(update, context)
+        return
+
     # 检查是否在分步投稿状态
     if user_id in user_states and 'step' in user_states[user_id]:
         await handle_step_post_message(update, context)
@@ -642,7 +819,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pattern = (
             r"名称：\s*.*\n\n"
             r"描述：\s*.*\n\n"
-            r"(链接：\s*https?:\/\/[^\s]+\n)+\n"
+            r"(链接：\s*https?:\\/\\/[^\s]+\n)+\n"
             r"📁 大小：\s*.*\n"
             r"🏷 标签：\s*.*"
         )
@@ -768,7 +945,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "edit_post": handle_edit_callback,
         "confirm_post": handle_confirm_callback,
         "cancel_post": cancel_post,
-        "cancel_step_post": cancel_step_post
+        "cancel_step_post": cancel_step_post,
+        "edit_name": handle_edit_field_callback,
+        "edit_description": handle_edit_field_callback,
+        "edit_links": handle_edit_field_callback,
+        "edit_size": handle_edit_field_callback,
+        "edit_tags": handle_edit_field_callback,
+        "finish_edit": handle_finish_edit,
+        "cancel_edit": handle_cancel_edit,
+        "cancel_edit_field": handle_cancel_edit_field
     }
 
     if query.data in handlers:
@@ -787,23 +972,6 @@ async def clear_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
 
-async def handle_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    处理编辑回调
-    """
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    if user_id in user_posts:
-        del user_posts[user_id]
-
-    await query.edit_message_text("请重新发送新的投稿内容，格式与之前相同。")
-
-
-
-
-
-# 修改 handle_confirm_callback 函数
 async def handle_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     处理确认发布回调 - 根据网盘类型发布到对应频道
@@ -830,6 +998,15 @@ async def handle_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
 
         # 处理重复链接
         processed_caption = post_manager.remove_duplicate_links(caption)
+        
+        # 在最终提交时添加"鹏摇星海"标签
+        if "🏷 标签：" in processed_caption:
+            # 如果已经有标签行，检查是否包含"#鹏摇星海"，如果没有则添加
+            if "#鹏摇星海" not in processed_caption:
+                processed_caption = processed_caption.replace("🏷 标签：", "🏷 标签：#鹏摇星海 ")
+        else:
+            # 如果没有标签行，添加包含"#鹏摇星海"的标签行
+            processed_caption += "\n🏷 标签：#鹏摇星海"
 
         # 提取链接以确定链接类型
         links = re.findall(r"链接：\s*(https?://[^\s\n]+)", processed_caption)
@@ -1046,4 +1223,11 @@ if __name__ == '__main__':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     main()
+
+
+
+
+
+
+
 
