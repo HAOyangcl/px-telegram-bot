@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # 机器人配置
 # TOKEN = 'telegram_bot_token'
-# TOKEN = os.getenv("TOKEN")        # 从 Render 环境变量里读
+ TOKEN = os.getenv("TOKEN")        # 从 Render 环境变量里读
 
 CHANNEL_IDS = ['@yunpanNB', '@ammmziyuan']  # 多个频道ID
 SPECIFIC_CHANNELS = {
