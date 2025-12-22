@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 
 # 机器人配置
 # TOKEN = 'telegram_bot_token'
-TOKEN = os.getenv("TOKEN")        # 从 Render 环境变量里读
-CHANNEL_IDS = ['@yunpanNB', '@ammmziyuan','@naclyunpan']  # 多个频道ID
+# TOKEN = os.getenv("TOKEN")        # 从 Render 环境变量里读
+
+CHANNEL_IDS = ['@yunpanNB', '@ammmziyuan']  # 多个频道ID
 SPECIFIC_CHANNELS = {
     'quark': '@yunpanquark',      # 夸克网盘频道
     'baidu': '@yunpanbaidu',      # 百度网盘频道
@@ -1154,6 +1155,8 @@ async def handle_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     # 清理数据
     if user_id in user_posts:
         del user_posts[user_id]
+    if user_id in user_states:
+        del user_states[user_id]
 
     await asyncio.sleep(2)
     await start(update, context)
@@ -1224,6 +1227,7 @@ if __name__ == '__main__':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     main()
+
 
 
 
